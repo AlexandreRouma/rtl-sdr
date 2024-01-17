@@ -1441,68 +1441,45 @@ int rtlsdr_check_dongle_model(void *dev, char *manufact_check, char *product_che
 	return 0;
 }
 
-
-int rtlsdr_open(rtlsdr_dev_t **out_dev, uint32_t index)
-{
+int rtlsdr_create_device(rtlsdr_dev_t **dev) {
 	int r;
-	int i;
-	libusb_device **list;
-	rtlsdr_dev_t *dev = NULL;
-	libusb_device *device = NULL;
-	uint32_t device_count = 0;
-	struct libusb_device_descriptor dd;
-	uint8_t reg;
-	ssize_t cnt;
 
-	dev = malloc(sizeof(rtlsdr_dev_t));
-	if (NULL == dev)
+	*dev = malloc(sizeof(rtlsdr_dev_t));
+	if (NULL == *dev)
 		return -ENOMEM;
 
-	memset(dev, 0, sizeof(rtlsdr_dev_t));
-	memcpy(dev->fir, fir_default, sizeof(fir_default));
+	memset(*dev, 0, sizeof(rtlsdr_dev_t));
+	memcpy((*dev)->fir, fir_default, sizeof(fir_default));
 
-	r = libusb_init(&dev->ctx);
+#ifdef __ANDROID__
+	libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY, NULL);
+#endif
+
+	r = libusb_init(&(*dev)->ctx);
 	if(r < 0){
 		free(dev);
 		return -1;
 	}
 
-	dev->dev_lost = 1;
+	(*dev)->dev_lost = 1;
+}
 
-	cnt = libusb_get_device_list(dev->ctx, &list);
+void rtlsdr_free_device(rtlsdr_dev_t *dev) {
+	if (dev) {
+		if (dev->devh)
+			libusb_close(dev->devh);
 
-	for (i = 0; i < cnt; i++) {
-		device = list[i];
+		if (dev->ctx)
+			libusb_exit(dev->ctx);
 
-		libusb_get_device_descriptor(list[i], &dd);
-
-		if (find_known_device(dd.idVendor, dd.idProduct)) {
-			device_count++;
-		}
-
-		if (index == device_count - 1)
-			break;
-
-		device = NULL;
+		free(dev);
 	}
+}
 
-	if (!device) {
-		r = -1;
-		goto err;
-	}
-
-	r = libusb_open(device, &dev->devh);
-	if (r < 0) {
-		libusb_free_device_list(list, 1);
-		fprintf(stderr, "usb_open error %d\n", r);
-		if(r == LIBUSB_ERROR_ACCESS)
-			fprintf(stderr, "Please fix the device permissions, e.g. "
-			"by installing the udev rules file rtl-sdr.rules\n");
-		goto err;
-	}
-
-	libusb_free_device_list(list, 1);
-
+int rtlsdr_init_device(rtlsdr_dev_t **out_dev, rtlsdr_dev_t *dev) {
+	int r;
+	uint8_t reg;
+	
 	if (libusb_kernel_driver_active(dev->devh, 0) == 1) {
 		dev->driver_active = 1;
 
@@ -1643,17 +1620,90 @@ found:
 
 	return 0;
 err:
-	if (dev) {
-		if (dev->devh)
-			libusb_close(dev->devh);
-
-		if (dev->ctx)
-			libusb_exit(dev->ctx);
-
-		free(dev);
-	}
+	rtlsdr_free_device(dev);
 
 	return r;
+}
+
+int rtlsdr_open(rtlsdr_dev_t **out_dev, uint32_t index)
+{
+	int r;
+	int i;
+	libusb_device **list;
+	rtlsdr_dev_t *dev = NULL;
+	libusb_device *device = NULL;
+	uint32_t device_count = 0;
+	struct libusb_device_descriptor dd;
+	ssize_t cnt;
+
+	r = rtlsdr_create_device(&dev);
+	if(r < 0){
+		return r;
+	}
+
+	cnt = libusb_get_device_list(dev->ctx, &list);
+
+	for (i = 0; i < cnt; i++) {
+		device = list[i];
+
+		libusb_get_device_descriptor(list[i], &dd);
+
+		if (find_known_device(dd.idVendor, dd.idProduct)) {
+			device_count++;
+		}
+
+		if (index == device_count - 1)
+			break;
+
+		device = NULL;
+	}
+
+	if (!device) {
+		rtlsdr_free_device(dev);
+		return -1;
+	}
+
+	r = libusb_open(device, &dev->devh);
+	if (r < 0) {
+		libusb_free_device_list(list, 1);
+		fprintf(stderr, "usb_open error %d\n", r);
+		if(r == LIBUSB_ERROR_ACCESS)
+			fprintf(stderr, "Please fix the device permissions, e.g. "
+			"by installing the udev rules file rtl-sdr.rules\n");
+		rtlsdr_free_device(dev);
+		return r;
+	}
+
+	libusb_free_device_list(list, 1);
+
+	return rtlsdr_init_device(out_dev, dev);
+}
+
+int rtlsdr_open_sys_dev(rtlsdr_dev_t **out_dev, intptr_t sys_dev) {
+#if !defined(_WIN32) && LIBUSB_API_VERSION >= 0x01000107
+	int r;
+	int i;
+	rtlsdr_dev_t *dev = NULL;
+
+	r = rtlsdr_create_device(&dev);
+	if(r < 0){
+		return r;
+	}
+
+	r = libusb_wrap_sys_device(dev->ctx, fd, &dev->devh);
+	if (r < 0) {
+		fprintf(stderr, "usb_open error %d\n", r);
+		if(r == LIBUSB_ERROR_ACCESS)
+			fprintf(stderr, "Please fix the device permissions, e.g. "
+			"by installing the udev rules file rtl-sdr.rules\n");
+		rtlsdr_free_device(dev);
+		return r;
+	}
+
+	return rtlsdr_init_device(out_dev, dev);
+#else
+	return -1;
+#endif
 }
 
 int rtlsdr_close(rtlsdr_dev_t *dev)
