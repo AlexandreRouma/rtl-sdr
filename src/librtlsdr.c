@@ -1462,6 +1462,8 @@ int rtlsdr_create_device(rtlsdr_dev_t **dev) {
 	}
 
 	(*dev)->dev_lost = 1;
+
+	return 0;
 }
 
 void rtlsdr_free_device(rtlsdr_dev_t *dev) {
