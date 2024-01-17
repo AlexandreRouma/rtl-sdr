@@ -1690,7 +1690,7 @@ int rtlsdr_open_sys_dev(rtlsdr_dev_t **out_dev, intptr_t sys_dev) {
 		return r;
 	}
 
-	r = libusb_wrap_sys_device(dev->ctx, fd, &dev->devh);
+	r = libusb_wrap_sys_device(dev->ctx, sys_dev, &dev->devh);
 	if (r < 0) {
 		fprintf(stderr, "usb_open error %d\n", r);
 		if(r == LIBUSB_ERROR_ACCESS)
